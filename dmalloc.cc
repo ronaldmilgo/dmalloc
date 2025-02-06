@@ -5,7 +5,11 @@
 #include <cstdio>
 #include <cinttypes>
 #include <cassert>
-#include <stdint.h> 
+#include <cstdint> 
+#include <unordered_map>
+#include <string>
+#include <vector>
+#include <algorithm>
 
 #define CANARY 0xDEADBEEF
 #define CANARY_SIZE 200
@@ -23,6 +27,8 @@ typedef struct dmalloc_metadata{
 static dmalloc_statistics global_stats = {0, 0, 0, 0, 0, 0, 0, 0};
 static dmalloc_metadata *head = NULL;
 
+//map to store data -  "file:line" is the key and value is sz(bytes) --- {"file:line" : xxx bytes}
+static std::unordered_map<std::string, size_t> allocation_hashmap;
 /// dmalloc_malloc(sz, file, line)
 ///    Return a pointer to `sz` bytes of newly-allocated dynamic memory.
 ///    The memory is not initialized. If `sz == 0`, then dmalloc_malloc must
@@ -62,6 +68,10 @@ void* dmalloc_malloc(size_t sz, const char* file, long line) {
         head->prev = metadata;
     }
     head = metadata;
+
+    //get key for allocation_hashmap -- "file:line"
+    std::string key = std::string(file) + ":" + std::to_string(line);
+    allocation_hashmap[key] += sz; 
 
     //update stats
     global_stats.nactive++;
@@ -245,4 +255,18 @@ void dmalloc_print_leak_report() {
 
 void dmalloc_print_heavy_hitter_report() {
     // Your heavy-hitters code here
+    //copy over key-value pairs from the hashtable to vector for easy sorting
+    std::vector<std::pair<std::string, size_t>> allocation_vector(allocation_hashmap.begin(), allocation_hashmap.end());
+
+    //Sort descending by allocated bytes
+    std::sort(allocation_vector.begin(), allocation_vector.end(), [](const auto& x, const auto& y) {return x.second > y.second; });
+
+    // Print heavy hitters (above 20% threshold)
+    for (const auto& entry : allocation_vector) {
+        double percentage = (100.0 * entry.second) / global_stats.total_size;
+        if (percentage >= 10.0) {  //Heavy hitters must be ≥20% of total allocations
+            printf("HEAVY HITTER: %s: %zu bytes (~%.1f%%)\n",
+                   entry.first.c_str(), entry.second, percentage);
+        }
+    }
 }
